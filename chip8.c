@@ -1,19 +1,30 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <SDL2/SDL.h>
+
+#define HEIGHT 32
+#define WIDTH 64
 
 typedef unsigned short word;
 typedef unsigned char byte;
 
+int sizeMod = 10;
 word opcode;
 byte memory[4096];
 byte V[16];
+byte sound_timer;
+byte delay_timer;
+byte key[16];
+byte quit = 0;
+byte pixels[64*32];
+byte draw;
 
 word I;
 word pc;
 word stack[16];
 word sp;
-byte chip8_fontset[80] =
+byte font[80] =
 { 
   0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
   0x20, 0x60, 0x20, 0x20, 0x70, // 1
@@ -33,24 +44,110 @@ byte chip8_fontset[80] =
   0xF0, 0x80, 0xF0, 0x80, 0x80  // F
 };
 
+SDL_Window * window;
+SDL_Surface * screenSurface;
+
 void init();
 void emulateCycle();
 void test();
 void printAll();
+void initIO();
+int loadGame(char * game);
+int updateKey();
+void closeSDL();
+void clearScreen();
+void drawSprite(word X, word Y, word rows);
+void updateGraphics();
 
 int main(int argc, char **argv)
 {
+	if(argc!=2)
+	{
+		printf("Not a valid input.\n");
+		return 0;
+	}
+	if (! loadGame(argv[1]))
+	{
+		return;
+	}
 	init();
-	test();
+	initIO();
+	do{
+		 emulateCycle();
+		 if (draw) updateGraphics();
+
+	}while(!updateKey());
+ 	closeSDL();
+}
+
+void initIO()
+{
+	window = NULL;
+	screenSurface = NULL;
+
+    if( SDL_Init( SDL_INIT_VIDEO ) < 0 )
+    {
+        printf( "SDL could not initialize! SDL_Error: %s\n", SDL_GetError() );
+    }
+
+    else{
+        //Create window
+        window = SDL_CreateWindow( "SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH*sizeMod, HEIGHT*sizeMod, SDL_WINDOW_SHOWN );
+        if( window == NULL )
+        {
+            printf( "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
+        }
+        else
+        {
+            //Get window surface
+            screenSurface = SDL_GetWindowSurface( window );
+
+		}
+		updateGraphics();
+
+
+		return;
+
+    }
+}
+
+int loadGame(char * game)
+{
+	FILE * fp;
+	fp = fopen(game,"r");
+	if (fp == NULL) 
+	{
+		printf("Not a valid game\n");
+		return 0;
+	}
+	int i = 0;
+	while(1){ 
+		if(feof(fp))
+			break;
+		memory[0x200 + i] = fgetc(fp);
+		i++;
+	}
+	fclose(fp);
+	return 1;
+}
+
+void  closeSDL()
+{
+	SDL_FreeSurface(screenSurface);
+	screenSurface=NULL;
+	SDL_DestroyWindow(window);
+	window = NULL;
+	SDL_Quit();
+
 }
 
 void test()
 {
-	memory[pc] = 0xA2;
-	memory[pc+1] = 0x15;
 	printAll();
 	emulateCycle();
 	printAll();
+	emulateCycle();
+	printAll();	
 
 
 }
@@ -77,21 +174,104 @@ void init()
 	I = 0;
 	sp = 0;
 	srand(time(NULL));
+	int i = 0;
+	for (i;i<80;i++)
+	{
+		memory[i] = font[i];
+	}
+	sound_timer=0;
+	delay_timer = 0;
+	for (i = 0;i<16;i++)
+		key[i]=0;
 
+	return;
+}
+
+void clearScreen()
+{
+	int i = 0;
+	for(i;i<64*32;i++)
+	{
+		pixels[i] = 0;
+	}
+	draw = 1;
+	return;
+}
+
+void drawSprite(word X, word Y, word rows)
+{
+	int i;
+	int j;
+	int coord;
+	byte line;
+	V[0xF] = 0;
+	for (i = 0; i<rows; i++)
+	{
+		line = memory[I+i];
+		for (j =0; j<8;j++)
+		{
+			coord = ((V[X]+j)%64) + ((V[Y]+i)%32)*64;
+			if (pixels[coord] == 1)
+			{
+				if(line>>7)
+				{
+					V[0xF]=1;
+					pixels[coord]=0;
+				}
+			}
+			else
+			{
+				if(line>>7)
+				{
+					pixels[coord]=1;
+				}
+			}
+			line = line<<1;
+
+		}
+	}
+	draw = 1;
+	return;
+}
+
+void updateGraphics()
+{
+	Uint32 black = SDL_MapRGB(screenSurface->format,0,0,0);
+	Uint32 white = SDL_MapRGB(screenSurface->format,255,255,255);
+	int x = 0;
+	int y = 0;
+	int i = 0;
+	for (y = 0; y<HEIGHT *sizeMod;y++ )
+	{
+		for(x = 0; x<WIDTH * sizeMod; x++)
+		{
+			i = y/10*64+x/10;
+			Uint32 * target = (Uint8*) screenSurface->pixels + y * screenSurface->pitch + x * sizeof *target;
+			if(pixels[i]==0) *target = black;
+			else *target = white;			
+		}
+	}
+	SDL_UpdateWindowSurface(window);
+	draw = 0;
+	return;
 
 }
+
 void emulateCycle()
 {
 	opcode = memory[pc] << 8 | memory[pc+1];
 	word X = (opcode & 0x0F00)>>8;
 	word Y = (opcode & 0x00F0)>>4;
 	byte i = 0;
+	byte pressed = 0;
 	switch (opcode & 0xF000)
 	{
 		case 0x0000:
 			switch (opcode & 0x000F)
 			{
-				case 0x0000:		//x00E0 clears screen NEED TO DO
+				case 0x0000:		//x00E0 clears screen
+					clearScreen();
+					pc+=2;
 				break;
 
 				case 0x000E:		//x00EE returns from subroutine
@@ -214,16 +394,22 @@ void emulateCycle()
 			pc+=2;
 		break;
 
-		case 0xD000:				//SPRITES NEED TO DOOOOOOOOOOO
+		case 0xD000:				//xDXYN draws sprite. check wiki for details. https://en.wikipedia.org/wiki/CHIP-8
+			drawSprite(X,Y, opcode & 0x000F);
+			pc+=2;
 		break;
 
 		case 0xE000:
 			switch(opcode & 0x000F)
 			{
 				case 0x000E:		//xEX9E skips next instr if key stored in VX is pressed
+					if(key[V[X]]) pc+=4;
+					else pc+=2;
 				break;
 
 				case 0x0001:		//xEXA1 skips next instr if key stored in Vx isnt pressed
+					if(key[V[X]]) pc+=2;
+					else pc+=4;
 				break;
 			}
 		break;
@@ -232,19 +418,32 @@ void emulateCycle()
 			switch(opcode & 0x00FF)
 			{
 				case 0x0007:		//xFX07 sets VX to value of delay timer
-
+					V[X]=delay_timer;
+					pc+=2;
 				break;
 
 				case 0x000A:		//xFX0A waits for key press then stores in VX
-				
+					for (i =0;i<16;i++)
+					{
+						if (key[i]==1)
+						{
+							pressed = 1;
+							V[X] = i;
+						}
+					} 
+					if(pressed) pc+=2;
+					else return;	
+
 				break;
 
 				case 0x0015:		//xFX15 sets delay time to Vx
-
+					delay_timer = V[X];
+					pc+=2;
 				break;
 
 				case 0x0018:		//xFX18 sets sound timer to VX
-
+					sound_timer=V[X];
+					pc+=2;
 				break;
 
 				case 0x001E:		//FX1E adds VX to I
@@ -252,8 +451,9 @@ void emulateCycle()
 					pc+=2;
 				break;
 
-				case 0x0029:		//FONT STUFF TO DO
-
+				case 0x0029:		//FX29 sets I to memory location of FONT letter in VX
+					I = V[X] * 5;
+					pc+=2;
 				break;
 
 				case 0x0033:		//stores binary coded deciaml of VX to address stored in I. stores MS in I and LS in I +2
@@ -285,4 +485,38 @@ void emulateCycle()
 			printf("Not a valid OPCODE\n");
 		break;																		
 	}
+	if(delay_timer>0) delay_timer--;
+	if(sound_timer!=0)
+	{
+		sound_timer--;
+		//PLAYYYYY SOUNNNNNND
+	}
+}
+
+int updateKey()
+{
+	SDL_Event e;
+	while(SDL_PollEvent( &e) !=0)
+	{
+		if(e.type == SDL_QUIT)
+			return 1;
+	}
+	const Uint8* state = SDL_GetKeyboardState(NULL);
+	key[0] = state[SDL_SCANCODE_X];
+	key[1]= state[SDL_SCANCODE_1];
+	key[2] = state[SDL_SCANCODE_2];
+	key[3]= state[SDL_SCANCODE_3];
+	key[4] = state[SDL_SCANCODE_Q];
+	key[5]= state[SDL_SCANCODE_W];
+	key[6] = state[SDL_SCANCODE_E];
+	key[7]= state[SDL_SCANCODE_A];
+	key[8] = state[SDL_SCANCODE_S];
+	key[9]= state[SDL_SCANCODE_D];
+	key[10] = state[SDL_SCANCODE_Z];
+	key[11]= state[SDL_SCANCODE_C];
+	key[12] = state[SDL_SCANCODE_4];
+	key[13]= state[SDL_SCANCODE_R];		
+	key[14] = state[SDL_SCANCODE_F];
+	key[15]= state[SDL_SCANCODE_V];	
+	return 0;			
 }
