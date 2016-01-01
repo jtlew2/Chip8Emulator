@@ -5,7 +5,7 @@
 
 #define HEIGHT 32
 #define WIDTH 64
-
+#define DELAY_VALUE 8
 typedef unsigned short word;
 typedef unsigned char byte;
 
@@ -74,7 +74,11 @@ int main(int argc, char **argv)
 	initIO();
 	do{
 		 emulateCycle();
-		 if (draw) updateGraphics();
+		 if (draw){
+		 	SDL_Delay(DELAY_VALUE);	
+
+		 	updateGraphics();
+		 } 
 
 	}while(!updateKey());
  	closeSDL();
@@ -92,7 +96,7 @@ void initIO()
 
     else{
         //Create window
-        window = SDL_CreateWindow( "SDL Tutorial", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH*sizeMod, HEIGHT*sizeMod, SDL_WINDOW_SHOWN );
+        window = SDL_CreateWindow( "CHIP-8 EMULATOR", SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, WIDTH*sizeMod, HEIGHT*sizeMod, SDL_WINDOW_SHOWN );
         if( window == NULL )
         {
             printf( "Window could not be created! SDL_Error: %s\n", SDL_GetError() );
@@ -433,6 +437,7 @@ void emulateCycle()
 					} 
 					if(pressed) pc+=2;
 					else return;	
+					SDL_Delay(10);
 
 				break;
 
@@ -491,6 +496,8 @@ void emulateCycle()
 		sound_timer--;
 		//PLAYYYYY SOUNNNNNND
 	}
+	
+
 }
 
 int updateKey()
